@@ -125,6 +125,9 @@ def bullet_list(converter, node):
             items.append(spectra.list_item(text, sublist))
         return items
     converter.css.add_leftover(node, f'ul.{list_class}, ol.{list_class}', set(), layout=False)
+    sides = four_sides(node.own_style.get('margin'))
+    if sides:   # el tema le pone margen izquierdo a las listas y en celular el texto se sale de su tarjeta
+        converter.css.add(f'ul.{list_class}, ol.{list_class}', {'margin-left': sides[3], 'margin-right': sides[1]})
     if node.style.get('font-family'):   # la lista no hereda la fuente de la página: el tema pone la suya
         converter.css.add(f'.{list_class} li', {'font-family': node.style['font-family']})
     converter.css.add_descendants(node, f'.{list_class}')
