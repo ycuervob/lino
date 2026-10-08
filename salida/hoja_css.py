@@ -49,6 +49,9 @@ class ExtraCss:
         if layout and own.get('display') == 'flex' and any(state in ('::before', '::after') for state in node.states):
             # título con raya (h2::after { flex: 1 }): sin el flex del título la raya mide 0 y no se ve
             self.add(target, {prop: own[prop] for prop in ('display', 'align-items', 'justify-content', 'gap') if prop in own})
+        if layout and own.get('flex-shrink') == '0':
+            # Spectra no tiene atributo para esto: sin él, una lista con max-height aplasta y corta sus tarjetas
+            self.add(target, {'flex-shrink': '0'})
         mobile_changes = {prop: value for prop, value in untranslated(node.own_mobile_style).items() if own.get(prop) != value}
         self.add(target, mobile_changes, self.mobile_breakpoint)
         for states, breakpoint in ((node.states, None), (node.mobile_states, self.mobile_breakpoint)):
