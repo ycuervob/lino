@@ -1,11 +1,11 @@
 """CSS de salida: lo que Spectra no puede guardar como atributo de bloque (:hover, ::before, transiciones,
 alturas de fotos, scrolls, ajustes de celular...). Se escribe apuntando a la clase única de cada bloque."""
-import re
+import os, re
 
 from config import avisos
 from lectura.arbol import Node, walk
 from lectura.estilos import css_blocks, parse_declarations, resolve_vars, split_outside_parens
-from lectura.valores import without_grid
+from lectura.valores import media_url, without_grid
 
 # maquetación que Spectra resuelve con sus propios atributos (en contenedores no se copia como CSS)
 LAYOUT_PROPS = {'display', 'grid-template-columns', 'grid-template-rows', 'grid-column', 'grid-row', 'gap', 'row-gap',
@@ -13,6 +13,8 @@ LAYOUT_PROPS = {'display', 'grid-template-columns', 'grid-template-rows', 'grid-
                 'align-items', 'justify-content', 'align-content', 'width', 'max-width', 'min-width', 'margin',
                 'margin-top', 'margin-bottom', 'margin-left', 'margin-right', 'box-sizing', 'place-items'}
 MARGIN_PROPS = {'margin', 'margin-top', 'margin-bottom'}
+# cambios de celular que Spectra no guarda como atributo (p. ej. etiquetas que en celular se estiran y se redondean menos)
+MOBILE_ONLY_CSS = {'flex-grow', 'gap', 'row-gap', 'column-gap', 'border-radius', 'flex-direction', 'align-items'}
 
 
 class ExtraCss:
@@ -49,10 +51,31 @@ class ExtraCss:
         if layout and own.get('display') == 'flex' and any(state in ('::before', '::after') for state in node.states):
             # título con raya (h2::after { flex: 1 }): sin el flex del título la raya mide 0 y no se ve
             self.add(target, {prop: own[prop] for prop in ('display', 'align-items', 'justify-content', 'gap') if prop in own})
+        if layout and own.get('display') in ('inline-flex', 'inline-block'):
+            # contenedor "en línea" (p. ej. un sello de fecha): Spectra lo estira al 100 %, debe medir lo que su contenido
+            self.add(target, {'width': 'fit-content', 'max-width': '100%'})
+        if layout and node.tag == 'div' and own.get('max-width', '').endswith('px') and (node.parent is None or node.parent.tag != 'section'):
+            # bloque de texto angosto (p. ej. el texto de la portada al lado de una imagen): Spectra no tiene atributo
+            self.add(target, {'max-width': own['max-width']})
+        if layout and node.tag == 'div' and own.get('width', '').endswith('px') and node.parent is not None and node.parent.tag != 'section':
+            # caja de ancho fijo (p. ej. una pestaña): Spectra no tiene atributo en px; en celular, su ancho propio si cambia
+            self.add(target, {'width': own['width'], 'max-width': '100%'})
+            mobile_width = node.own_mobile_style.get('width')
+            if mobile_width and mobile_width != own['width']:
+                self.add(target, {'width': f'{mobile_width} !important'}, self.mobile_breakpoint)
         if layout and own.get('flex-shrink') == '0':
             # Spectra no tiene atributo para esto: sin él, una lista con max-height aplasta y corta sus tarjetas
             self.add(target, {'flex-shrink': '0'})
         mobile_changes = {prop: value for prop, value in untranslated(node.own_mobile_style).items() if own.get(prop) != value}
+        # en celular Spectra no tiene atributo para estas: si cambian respecto al escritorio, van como CSS
+        mobile_changes.update({prop: value for prop, value in node.own_mobile_style.items()
+                               if prop in MOBILE_ONLY_CSS and own.get(prop) != value})
+        mobile_background = node.own_mobile_style.get('background')
+        if 'background' in translated and mobile_background and mobile_background != own.get('background'):
+            # el fondo de escritorio quedó como atributo; el de celular (p. ej. un degradado más oscuro) va como CSS
+            mobile_changes['background'] = re.sub(r'url\(\s*[\'"]?([^\'")]+)[\'"]?\s*\)',
+                                                  lambda m: f'url({media_url(m.group(1))})',
+                                                  mobile_background)
         self.add(target, mobile_changes, self.mobile_breakpoint)
         for states, breakpoint in ((node.states, None), (node.mobile_states, self.mobile_breakpoint)):
             for state, declarations in states.items():

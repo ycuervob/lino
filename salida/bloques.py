@@ -5,7 +5,6 @@ Si WordPress marca un bloque como inválido, normalmente se corrige aquí.
 """
 import json, random
 
-from config import CARPETA_MEDIOS
 
 
 def new_block_id():
@@ -74,11 +73,11 @@ def icon(name, block_id=None, **attrs):
     return f'<!-- wp:uagb/icon {to_json({"icon": name, "block_id": block_id or new_block_id(), **attrs})} /-->'
 
 
-def image(file_name, alt, natural_width, natural_height, block_id=None, class_name=None, **attrs):
-    """Imagen de Spectra que apunta a la carpeta de Medios por nombre de archivo (WordPress no da el ID de antemano).
+def image(url, alt, natural_width, natural_height, block_id=None, class_name=None, **attrs):
+    """Imagen de Spectra con su URL en WordPress (valores.media_url; WordPress no da el ID de antemano).
     attrs puede traer width/height: el tamaño con que se muestra (si no, el natural)."""
     block_id = block_id or new_block_id()
-    url = CARPETA_MEDIOS + file_name
+    file_name = url.rsplit('/', 1)[-1]
     block_attrs = {"block_id": block_id, "url": url, "urlTablet": url, "urlMobile": url, "alt": alt,
                    "linkDestination": "none", "title": file_name.rsplit('.', 1)[0], "naturalWidth": natural_width,
                    "naturalHeight": natural_height, "sizeSlug": "full", "sizeSlugTablet": "full", "sizeSlugMobile": "full"}
@@ -110,9 +109,9 @@ def button(label, link, block_id=None, class_name=None, **attrs):
             '<!-- /wp:uagb/buttons-child -->')
 
 
-def button_group(buttons, align="left", gap=12):
+def button_group(buttons, align="left", gap=12, block_id=None):
     """Grupo de botones de Spectra con los botones (button()) ya armados."""
-    block_id = new_block_id()
+    block_id = block_id or new_block_id()
     block_attrs = {"block_id": block_id, "classMigrate": True, "childMigrate": True, "align": align, "gap": gap}
     return (f'<!-- wp:uagb/buttons {to_json(block_attrs)} -->\n<div class="wp-block-uagb-buttons uagb-buttons__outer-wrap uagb-btn__default-btn '
             f'uagb-btn-tablet__default-btn uagb-btn-mobile__default-btn uagb-block-{block_id}"><div class="uagb-buttons__wrap uagb-buttons-layout-wrap ">'

@@ -88,8 +88,12 @@ def flow(converter, node):
                               and node.style.get('flex-direction', '').startswith('column'))
             if is_flex_column:   # columna flex centrada
                 align = {'center': 'center', 'flex-end': 'right', 'end': 'right'}.get(node.style.get('align-items'), align)
-            blocks.append(spectra.button_group(pending_buttons, align=align if align in ('left', 'center', 'right') else 'left',
-                                               gap=gaps(node.style, 12)[1]))
+            align = align if align in ('left', 'center', 'right') else 'left'
+            block_id = spectra.new_block_id()
+            # Spectra deja los botones en una sola fila (en celular se desbordan) y en celular los centra
+            converter.css.add(f'.uagb-block-{block_id} .uagb-buttons__wrap',
+                              {'flex-wrap': 'wrap', 'justify-content': {'left': 'flex-start', 'center': 'center', 'right': 'flex-end'}[align]})
+            blocks.append(spectra.button_group(pending_buttons, align=align, gap=gaps(node.style, 12)[1], block_id=block_id))
         pending_buttons = []
 
     for child in node.children:
@@ -104,7 +108,7 @@ def flow(converter, node):
                 inline_run.append(child)
         elif is_node and child.tag == 'span' and _is_icon(child) and not any(str(item).strip() for item in inline_run):
             flush_buttons()
-            blocks.append(elementos.icon(child))
+            blocks.append(elementos.icon(child, converter))
         elif is_inline(child):
             flush_buttons()
             inline_run.append(child)
@@ -135,6 +139,8 @@ def box(converter, node, block_id=None, **extra_attrs):
     if is_flex_column and justify in ('center', 'flex-end', 'space-between', 'space-around', 'space-evenly'):
         attrs['justifyContentDesktop'] = justify   # columna con el contenido centrado (o repartido) en vertical
         translated.add('justify-content')
+    if is_flex_column and own.get('align-items') in ALIGN_ITEMS_VALUES:
+        attrs['alignItemsDesktop'] = ALIGN_ITEMS_VALUES[own['align-items']]   # columna con los hijos a un lado o centrados
     if own.get('max-height') or own.get('overflow-y') in ('auto', 'scroll'):
         # lista con scroll vertical: si Spectra deja flex-wrap, al llenarse se reparte en columnas de lado
         attrs.update(wrapDesktop='nowrap', wrapTablet='nowrap', wrapMobile='nowrap')
@@ -202,8 +208,10 @@ def _flex_ratio(child):
 def _row_column(converter, child, **widths):
     """Contenedor de una columna de la fila. Una imagen o una fila anidada se envuelven en un contenedor sin padding;
     cualquier otro hijo es una caja (box) con los anchos de la columna."""
-    if child.tag == 'img' or is_row(child):
-        inner_blocks = [elementos.image(converter, child)] if child.tag == 'img' else block(converter, child)
+    is_icon = child.tag == 'span' and _is_icon(child)   # ícono suelto en una fila (p. ej. junto a un texto)
+    if child.tag == 'img' or is_icon or is_row(child):
+        inner_blocks = ([elementos.image(converter, child)] if child.tag == 'img' else
+                        [elementos.icon(child, converter)] if is_icon else block(converter, child))
         column_id = spectra.new_block_id()
         if child.tag != 'img':   # la fila envuelta ocupa todo el alto de su columna (tarjetas de igual altura)
             converter.css.add(f'.uagb-block-{column_id} > .wp-block-uagb-container', {'flex': '1 1 auto', 'align-self': 'stretch'})
@@ -236,6 +244,10 @@ def _row_with_columns(converter, node, children, block_id, attrs, is_grid, stack
         # si hay más hijos que columnas, se repite el patrón (fila que salta de línea)
         desktop_width = desktop_widths[index % len(desktop_widths)]
         mobile_width = mobile_widths[index % len(mobile_widths)]
+        if is_grid and child.style.get('grid-column', '').replace(' ', '') == '1/-1':
+            desktop_width = 100   # celda que ocupa toda la fila
+        if is_grid and child.mobile_style.get('grid-column', '').replace(' ', '') == '1/-1':
+            mobile_width = 100
         column_id, column = _row_column(converter, child, widthDesktop=desktop_width,
                                         widthTablet=tablet_widths[index % len(tablet_widths)], widthMobile=mobile_width)
         columns.append(column)
@@ -258,15 +270,21 @@ def _row_sized_by_content(converter, node, children, block_id, attrs, stacks_on_
     columns = []
     for child in children:
         column_id, column = _row_column(converter, child)
-        converter.css.add(f'.uagb-block-{column_id}', {'width': 'auto !important', 'flex': child.own_style.get('flex', '0 1 auto')})
+        own_width = child.own_style.get('width', '')
+        converter.css.add(f'.uagb-block-{column_id}', {'width': f"{own_width if own_width.endswith('px') else 'auto'} !important",
+                                                        'flex': child.own_style.get('flex', '0 1 auto')})
+        mobile_width = child.own_mobile_style.get('width')
+        if own_width.endswith('px') and mobile_width and mobile_width != own_width:   # columna de ancho fijo que cambia en celular
+            converter.css.add(f'.uagb-block-{column_id}', {'width': f'{mobile_width} !important'}, mobile_breakpoint)
         mobile_flex = child.own_mobile_style.get('flex')
         if mobile_flex not in (None, child.own_style.get('flex')):   # flex propio del @media de celular
             converter.css.add(f'.uagb-block-{column_id}', {'flex': mobile_flex}, mobile_breakpoint)
         columns.append(column)
     justify = JUSTIFY_CONTENT_VALUES.get(style.get('justify-content'), 'flex-start')
     wrap = 'wrap' if style.get('flex-wrap') == 'wrap' else 'nowrap'
+    mobile_wrap = 'wrap' if mobile_style.get('flex-wrap', style.get('flex-wrap')) == 'wrap' else 'nowrap'   # el @media de celular manda
     # childrenWidthDesktop auto: cada hijo mide lo que su contenido (si no, Spectra les pone 100% y se apilan)
-    attrs.update(directionMobile='column' if stacks_on_mobile else 'row', wrapDesktop=wrap, wrapMobile=wrap,
+    attrs.update(directionMobile='column' if stacks_on_mobile else 'row', wrapDesktop=wrap, wrapMobile=mobile_wrap,
                  justifyContentDesktop=justify, columnGapDesktop=column_gap, childrenWidthDesktop='auto')
     if stacks_on_mobile:   # además del atributo de Spectra, CSS explícito: en celular la fila se apila sí o sí
         mobile_direction = mobile_style.get('flex-direction', '')
@@ -290,7 +308,7 @@ def section(converter, node, loose_blocks=None):
         content = [row(converter, node)] if is_row(node) else flow(converter, node)
         class_name = ' '.join(name for name in (converter.class_names(node), converter.class_prefix + 'page') if name)
         anchor = node.attrs.get('id')
-        if not attrs.get('topPaddingDesktop') and not attrs.get('bottomPaddingDesktop'):   # sin padding en el CSS
+        if 'topPaddingDesktop' not in attrs and 'bottomPaddingDesktop' not in attrs:   # sin padding en el CSS (un 0 explícito se respeta)
             attrs.update(topPaddingDesktop=SECCION_SIN_PADDING, bottomPaddingDesktop=SECCION_SIN_PADDING)
         if 'topPaddingMobile' not in attrs:
             attrs.update(topPaddingMobile=round(attrs['topPaddingDesktop'] * .7),

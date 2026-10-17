@@ -46,7 +46,8 @@ def text_block(converter, node, items=None, layout=False):
     layout=True: node es una fila de enlaces (menú) que se escribe como un solo texto con su display:flex.
     Devuelve [] si no hay texto."""
     tag = node.tag if re.fullmatch(r'h[1-6]', node.tag) and items is None else 'p'
-    content = inline_html(node.children if items is None else items, node.style.get('color'))
+    is_lone_link = items is None and node.tag == 'a'   # <a> inline-block suelto: el texto debe seguir enlazado
+    content = inline_html([node] if is_lone_link else node.children if items is None else items, node.style.get('color'))
     if not content:
         return []
     block_id = spectra.new_block_id()
@@ -58,6 +59,8 @@ def text_block(converter, node, items=None, layout=False):
         keeps_display = node.own_style.get('display') in ('inline-block', 'inline-flex', 'block') and not layout
         converter.css.add_leftover(node, target, translated, layout=not layout)
         converter.css.add(target, {'display': node.own_style['display']} if keeps_display else {})
+        if is_lone_link:   # el enlace toma el color y el subrayado del texto, no los del tema
+            converter.css.add(f'{target} a', {'color': 'inherit', 'text-decoration': 'inherit'})
     child_nodes = [item for item in (node.children if items is None else items) if isinstance(item, Node)]
     converter.css.add_descendants(node, target, only=child_nodes)
     class_name = converter.class_names(node) if items is None else None

@@ -7,7 +7,7 @@ from conversion.atributos import first_font_family
 from conversion.clasificar import mobile_hide_attrs
 from conversion.textos import inline_html
 from lectura.arbol import VOID_TAGS, walk
-from lectura.valores import four_sides, image_size, luminance, parse_border, parse_shadow, to_px, wordpress_href
+from lectura.valores import four_sides, image_size, luminance, media_url, parse_border, parse_shadow, to_px, wordpress_href
 from salida import bloques as spectra
 
 # etiquetas que se esperan como bloque HTML; con cualquier otra se avisa en la terminal
@@ -42,12 +42,15 @@ def image(converter, node):
         translated.add('align-self')
     target = f'.uagb-block-{block_id} img'
     converter.css.add_leftover(node, target, translated)
+    mobile_width_px = to_px(node.own_mobile_style.get('width'))
+    if width_px and mobile_width_px and mobile_width_px != width_px:   # foto de ancho fijo más pequeña en celular
+        converter.css.add(target, {'width': f'{mobile_width_px}px'}, converter.css.mobile_breakpoint)
     if own.get('width') and not width_px:   # 100%, auto...: si no, Spectra usa el ancho natural de la foto
         converter.css.add(target, {'width': own['width'], 'max-width': 'none'})
         if own['width'] == '100%':   # el bloque y su <figure> también, o la foto no llena la tarjeta
             converter.css.add(f'.uagb-block-{block_id}, .uagb-block-{block_id} .wp-block-uagb-image__figure',
                               {'width': '100%', 'max-width': '100%'})
-    return spectra.image(os.path.basename(src), node.attrs.get('alt', ''), natural_width, natural_height,
+    return spectra.image(media_url(src), node.attrs.get('alt', ''), natural_width, natural_height,
                          block_id=block_id, class_name=converter.class_names(node), **attrs)
 
 
@@ -90,19 +93,30 @@ def button(converter, node):
                           block_id=block_id, class_name=converter.class_names(node), **attrs)
 
 
-def icon(span):
+def icon(span, converter=None):
     """<span> con un emoji de config.ICONOS (o data-icono="nombre") -> ícono de Spectra.
-    El ancho del span define el círculo/cuadro de fondo; el ícono queda centrado con padding."""
+    El ancho del span define el círculo/cuadro de fondo; el ícono queda centrado con padding.
+    Con converter, un tamaño distinto en celular (font-size/width del @media) va como CSS."""
     style = span.style
     size = to_px(style.get('font-size')) or 24
     box_width = to_px(style.get('width'))
     padding = max(0, (box_width - size) // 2) if box_width else 0
+    block_id = spectra.new_block_id()
+    if converter:
+        mobile = span.mobile_style
+        mobile_size = to_px(mobile.get('font-size')) or size
+        mobile_box = to_px(mobile.get('width')) or box_width
+        if (mobile_size, mobile_box) != (size, box_width):   # Spectra no tiene tamaño de ícono por dispositivo
+            mobile_padding = max(0, (mobile_box - mobile_size) // 2) if mobile_box else 0
+            breakpoint = converter.css.mobile_breakpoint
+            converter.css.add(f'.uagb-block-{block_id} .uagb-svg-wrapper', {'padding': f'{mobile_padding}px'}, breakpoint)
+            converter.css.add(f'.uagb-block-{block_id} svg', {'width': f'{mobile_size}px', 'height': f'{mobile_size}px'}, breakpoint)
     background = style.get('background') or style.get('background-color') or ''
     radius_value = style.get('border-radius', '0')
     radius = (box_width or size) // 2 if radius_value.endswith('%') else (to_px(radius_value) or 0)
     color = '#ffffff' if background and luminance(background) < .5 else style.get('color', '#000000')
     parent_align = (span.parent.style if span.parent else {}).get('text-align')
-    return spectra.icon(span.attrs.get('data-icono') or ICONOS[span.text()], iconSize=size,
+    return spectra.icon(span.attrs.get('data-icono') or ICONOS[span.text()], block_id=block_id, iconSize=size,
                         align=parent_align if parent_align in ('center', 'right') else 'left',
                         iconColor=color, iconBackgroundColor=background,
                         iconTopPadding=padding, iconRightPadding=padding, iconLeftPadding=padding,

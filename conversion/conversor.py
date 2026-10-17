@@ -14,6 +14,7 @@ El trabajo está repartido así:
 """
 import os, re
 
+from config import CARPETA_MEDIOS
 from conversion import estructura
 from lectura.arbol import TreeBuilder
 from lectura.estilos import Stylesheet
@@ -22,6 +23,9 @@ from salida.hoja_css import ExtraCss
 # bloque de WordPress escrito tal cual en el HTML: <!-- wp:x {...} /--> o <!-- wp:x -->...<!-- /wp:x -->
 WP_LITERAL_BLOCK = re.compile(r'<!--\s*wp:[\w/-]+(?:\s+\{.*?\})?\s*/-->'
                               r'|<!--\s*wp:([\w/-]+)(?:\s+\{.*?\})?\s*-->.*?<!--\s*/wp:\1\s*-->', re.S)
+
+# src/srcset con ruta relativa (no http:, /, data:, #)
+LOCAL_MEDIA = re.compile(r'(\b(?:src|srcset)=["\'])(?![a-z]+:|/|#)([^"\'\s]+)')
 
 
 class Converter:
@@ -36,7 +40,9 @@ class Converter:
 
         def protect_literal(match):
             # el comentario no sobrevive al parser de HTML: se cambia por una etiqueta que lo señala
-            self.wp_literals.append(match.group(0))
+            # las imágenes locales (src/srcset="img/x.svg") apuntan a la Biblioteca de medios, como las demás
+            self.wp_literals.append(LOCAL_MEDIA.sub(lambda m: m.group(1) + CARPETA_MEDIOS + os.path.basename(m.group(2)),
+                                                    match.group(0)))
             return f'<wp-raw data-i="{len(self.wp_literals) - 1}"></wp-raw>'
         html = WP_LITERAL_BLOCK.sub(protect_literal, open(path, encoding='utf-8').read())
         builder = TreeBuilder()

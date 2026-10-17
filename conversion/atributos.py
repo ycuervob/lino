@@ -3,12 +3,11 @@
 Cada función devuelve también qué propiedades CSS quedaron traducidas, para no copiarlas otra vez como CSS.
 El orden en que se agregan los atributos es el orden del JSON del bloque: no cambiarlo sin necesidad.
 """
-import os, re
+import re
 
-from config import CARPETA_MEDIOS
 from conversion.clasificar import mobile_hide_attrs
 from lectura.estilos import split_outside_parens
-from lectura.valores import four_sides, parse_border, parse_shadow, to_px
+from lectura.valores import media_url, four_sides, parse_border, parse_shadow, to_px
 
 SIDES = ('top', 'right', 'bottom', 'left')
 DEFAULT_HEADING_SIZES = {'h1': 32, 'h2': 24, 'h3': 19, 'h4': 16}
@@ -35,7 +34,13 @@ def container_attrs(node, root=False):
 
 def _add_background(node, attrs, translated):
     """Color, degradado o foto de fondo -> atributos. Devuelve el fondo como CSS si Spectra no lo puede guardar."""
-    background = (node.own_style.get('background') or node.own_style.get('background-color') or '').strip()
+    own = node.own_style
+    background = (own.get('background') or own.get('background-color') or '').strip()
+    if 'url(' in own.get('background-image', ''):
+        # background-image + background-size/position sueltos -> una capa como la del atajo background
+        background = ' '.join(filter(None, (own['background-image'], own.get('background-position'),
+                                            own.get('background-size') and '/ ' + own['background-size'])))
+        translated |= {'background-image', 'background-size', 'background-position'}
     if not background:
         return None
     background_css = None
@@ -49,7 +54,7 @@ def _add_background(node, attrs, translated):
     elif 'url(' in background:
         # combinación que Spectra no tiene: se copia como CSS exacto, con las fotos apuntando a Medios
         background_css = re.sub(r'url\(\s*[\'"]?([^\'")]+)[\'"]?\s*\)',
-                                lambda m: f'url({CARPETA_MEDIOS}{os.path.basename(m.group(1))})', background)
+                                lambda m: f'url({media_url(m.group(1))})', background)
     elif re.fullmatch(r'(linear|radial)-gradient\(.*\)', background) and background.count('gradient(') == 1:
         attrs.update(backgroundType='gradient', gradientValue=background)
     elif 'gradient(' not in background and len(split_outside_parens(background, ' ')) == 1:
@@ -64,7 +69,7 @@ def _add_background_photo(node, photo_layer, gradients, attrs, translated):
     """Capa 'url(...) center/cover fixed' (+ degradado encima) -> atributos de imagen de fondo y overlay."""
     url = re.search(r'url\(\s*[\'"]?([^\'")]+)', photo_layer).group(1)
     options = re.sub(r'url\([^)]*\)', '', photo_layer)
-    attrs.update(backgroundType='image', backgroundImageDesktop={'url': CARPETA_MEDIOS + os.path.basename(url)})
+    attrs.update(backgroundType='image', backgroundImageDesktop={'url': media_url(url)})
     if 'cover' in options or 'contain' in options:
         attrs['backgroundSizeDesktop'] = 'cover' if 'cover' in options else 'contain'
     if 'center' in options:
@@ -102,7 +107,9 @@ def _add_padding(node, attrs, translated, root):
     for side in SIDES:
         attrs.setdefault(f'{side}PaddingDesktop', 0)
         mobile_value = own_mobile.get(f'padding-{side}')
-        changes_on_mobile = mobile_value is not None and mobile_value != own.get(f'padding-{side}')
+        # también cuenta si el padding-<lado> pisa el que el shorthand dejó en celular (section { padding } + #id { padding-top: 0 })
+        changes_on_mobile = mobile_value is not None and (mobile_value != own.get(f'padding-{side}')
+                                                          or to_px(mobile_value, True) != attrs.get(f'{side}PaddingMobile'))
         is_root_side = root and side in ('left', 'right')
         if changes_on_mobile and to_px(mobile_value, True) is not None and not is_root_side:
             attrs[f'{side}PaddingMobile'] = to_px(mobile_value, True)

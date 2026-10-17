@@ -6,7 +6,7 @@ from lectura.valores import grid_columns, parse_border
 # si un <a> tiene alguna de estas adentro, es una tarjeta enlazada y no un botón
 BLOCK_TAGS_INSIDE_LINK = ('img', 'div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol')
 # propiedades que hacen que un contenedor sea una caja visible (no se aplana): fondo, borde, padding, scroll...
-BOX_PROPS = ('background', 'background-color', 'border', 'border-left', 'border-top', 'border-right', 'border-bottom',
+BOX_PROPS = ('background', 'background-color', 'background-image', 'border', 'border-left', 'border-top', 'border-right', 'border-bottom',
              'box-shadow', 'padding', 'border-radius', 'overflow', 'overflow-x', 'overflow-y', 'max-height')
 
 

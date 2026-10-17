@@ -202,7 +202,7 @@ class Stylesheet:
     """Todo el CSS de una página, listo para calcular el estilo de cada nodo.
 
     google_fonts: familias enlazadas desde Google Fonts.
-    variables: --variables de :root / html.
+    variables: --variables de :root / html (las de otras reglas se resuelven por nodo en compute).
     mobile_breakpoint: max-width del @media de celular (el mayor que aparezca; 768 si no hay).
     at_blocks: @ que no se traducen y se copian tal cual al CSS de salida.
     rules: [(especificidad, orden, partes_selector, estado, declaraciones, breakpoint)] ordenadas por cascada."""
@@ -231,8 +231,7 @@ class Stylesheet:
         self.mobile_breakpoint = max([breakpoint for _, _, breakpoint in rules if breakpoint] or [768])
         self.rules = []
         for order, (selector, declarations, breakpoint) in enumerate(rules):
-            declarations = {prop: resolve_vars(value, self.variables)
-                            for prop, value in declarations.items() if not prop.startswith('--')}
+            # las var() se resuelven por nodo en compute(): una --variable puede venir de un ancestro o de la misma regla
             for single_selector in split_outside_parens(selector, ','):
                 if single_selector.strip() in (':root', '*', '*::before', '*::after') or not declarations:
                     continue
@@ -246,7 +245,10 @@ class Stylesheet:
     def compute(self, root):
         """Llena en cada nodo own_style, own_mobile_style, style, mobile_style, states y mobile_states
         (ver arbol.Node). El style="" en línea pisa a las reglas."""
-        def visit(node, parent_style, parent_mobile_style):
+        def resolved(declarations, variables):
+            return {prop: resolve_vars(value, variables) for prop, value in declarations.items() if not prop.startswith('--')}
+
+        def visit(node, parent_style, parent_mobile_style, parent_vars, parent_mobile_vars):
             own, own_mobile, states, mobile_states = {}, {}, {}, {}
             for _, _, parts, state, declarations, breakpoint in self.rules:
                 if not matches(node, parts):
@@ -258,14 +260,19 @@ class Stylesheet:
                     own_mobile.update(declarations)
                 else:
                     own_mobile.update(declarations)
-            inline = {prop: resolve_vars(value, self.variables)
-                      for prop, value in parse_declarations(node.attrs.get('style', '')).items()}
+            inline = parse_declarations(node.attrs.get('style', ''))
             own.update(inline)
             own_mobile.update(inline)
+            # las --variables se heredan; cada valor se resuelve con las que ve este nodo
+            variables = {**parent_vars, **{k: v for k, v in own.items() if k.startswith('--')}}
+            mobile_vars = {**parent_mobile_vars, **{k: v for k, v in own_mobile.items() if k.startswith('--')}}
+            own, own_mobile = resolved(own, variables), resolved(own_mobile, mobile_vars)
+            states = {state: resolved(decl, variables) for state, decl in states.items()}
+            mobile_states = {state: resolved(decl, mobile_vars) for state, decl in mobile_states.items()}
             node.own_style, node.own_mobile_style, node.states, node.mobile_states = own, own_mobile, states, mobile_states
             node.style = {**{k: v for k, v in parent_style.items() if k in INHERITED}, **own}
             node.mobile_style = {**{k: v for k, v in parent_mobile_style.items() if k in INHERITED}, **own_mobile}
             for child in node.child_nodes:
-                visit(child, node.style, node.mobile_style)
+                visit(child, node.style, node.mobile_style, variables, mobile_vars)
         for child in root.child_nodes:
-            visit(child, {}, {})
+            visit(child, {}, {}, self.variables, self.variables)

@@ -148,6 +148,14 @@ def without_grid(declarations):
     return declarations
 
 
+def media_url(src):
+    """Ruta de imagen del HTML -> URL en WordPress: las locales a la carpeta de Medios por nombre; las de
+    internet (http, https, //) quedan igual."""
+    if src.startswith(('http:', 'https:', '//')):
+        return src
+    return CARPETA_MEDIOS + src.rsplit('/', 1)[-1]
+
+
 def wordpress_href(href):
     """Enlace del HTML local -> enlace en WordPress: imágenes locales a la carpeta de Medios (como el src) y
     los reemplazos de config.ENLACES (p. ej. la página de inicio)."""
