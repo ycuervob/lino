@@ -47,6 +47,15 @@ def hidden_on_mobile(node):
     return node.mobile_style.get('display') == 'none' and node.style.get('display') != 'none'
 
 
+def shown_only_on_mobile(node):
+    """¿Oculto en escritorio (display:none) y visible en el @media de celular? (p. ej. la versión vertical de una imagen)"""
+    return node.style.get('display') == 'none' and node.mobile_style.get('display', 'none') != 'none'
+
+
 def mobile_hide_attrs(node):
-    """Atributos de Spectra para ocultar el bloque en celular, si corresponde."""
-    return {'UAGHideMob': True, 'UAGResponsiveConditions': True} if hidden_on_mobile(node) else {}
+    """Atributos de Spectra para ocultar el bloque en celular, o en computador y tableta, si corresponde."""
+    if hidden_on_mobile(node):
+        return {'UAGHideMob': True, 'UAGResponsiveConditions': True}
+    if shown_only_on_mobile(node):
+        return {'UAGHideDesktop': True, 'UAGHideTab': True, 'UAGResponsiveConditions': True}
+    return {}

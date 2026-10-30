@@ -38,16 +38,19 @@ def _add_background(node, attrs, translated):
     background = (own.get('background') or own.get('background-color') or '').strip()
     if 'url(' in own.get('background-image', ''):
         # background-image + background-size/position sueltos -> una capa como la del atajo background
+        # (el color y el repeat van en la misma capa: si no, el color se perdía)
         background = ' '.join(filter(None, (own['background-image'], own.get('background-position'),
-                                            own.get('background-size') and '/ ' + own['background-size'])))
-        translated |= {'background-image', 'background-size', 'background-position'}
+                                            own.get('background-size') and '/ ' + own['background-size'],
+                                            own.get('background-repeat'), own.get('background-color'))))
+        translated |= {'background-image', 'background-size', 'background-position', 'background-repeat'}
     if not background:
         return None
     background_css = None
     layers = [layer.strip() for layer in split_outside_parens(background, ',')]
     photos = [layer for layer in layers if 'url(' in layer]
     gradients = [layer for layer in layers if 'gradient(' in layer and 'url(' not in layer]
-    is_photo_with_optional_gradient = len(photos) == 1 and len(gradients) <= 1 and len(layers) == len(gradients) + 1
+    is_photo_with_optional_gradient = (len(photos) == 1 and len(gradients) <= 1 and len(layers) == len(gradients) + 1
+                                       and _native_photo_options(photos[0]))
     if is_photo_with_optional_gradient:
         # foto de fondo (+ degradado encima) con atributos nativos: se puede editar desde el panel de Spectra
         _add_background_photo(node, photos[0], gradients, attrs, translated)
@@ -63,6 +66,13 @@ def _add_background(node, attrs, translated):
         background_css = background
     translated |= {'background', 'background-color'}
     return background_css
+
+
+def _native_photo_options(photo_layer):
+    """True si la capa solo usa lo que Spectra guarda (centro, cover/contain, fijo). Un color, una posición en px
+    o un tamaño propio no caben en sus atributos: esa capa va como CSS exacto."""
+    options = re.sub(r'url\([^)]*\)', '', photo_layer).replace('/', ' ').split()
+    return set(options) <= {'center', 'cover', 'contain', 'fixed', 'scroll', 'no-repeat'}
 
 
 def _add_background_photo(node, photo_layer, gradients, attrs, translated):
@@ -99,7 +109,8 @@ def _add_padding(node, attrs, translated, root):
             if not root and desktop[right] is not None and desktop[left] is not None:
                 attrs.update(rightPaddingDesktop=desktop[right], leftPaddingDesktop=desktop[left],
                              rightPaddingMobile=mobile[right], leftPaddingMobile=mobile[left])
-            translated.add('padding')
+            if node.tag == 'section' or None not in desktop:   # un lado en % (Spectra solo guarda px) va como CSS; en secciones no (el 80 % ya lo pone lino)
+                translated.add('padding')
     for side in SIDES:
         if to_px(own.get(f'padding-{side}')) is not None:
             attrs[f'{side}PaddingDesktop'] = to_px(own[f'padding-{side}'])
@@ -182,6 +193,9 @@ def heading_attrs(node, tag, google_fonts):
         attrs['headFontWeight'] = FONT_WEIGHT_NAMES.get(weight, weight)
     if style.get('text-align') in ('center', 'right', 'left'):
         attrs['headingAlign'] = style['text-align']
+    mobile_align = node.mobile_style.get('text-align')
+    if mobile_align in ('center', 'right', 'left') and mobile_align != style.get('text-align'):
+        attrs['headingAlignMobile'] = mobile_align   # p. ej. centrado en computador y a la izquierda en celular
     line_height = style.get('line-height', '')
     if re.fullmatch(r'[\d.]+', line_height):
         attrs.update(headLineHeightType='em', headLineHeight=float(line_height))

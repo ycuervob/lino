@@ -34,8 +34,11 @@ def inline_html(items, parent_color):
             text = inline_html(item.children, item.style.get('color'))
             color = item.style.get('color')
             has_own_color = 'color' in item.own_style and color != parent_color
-            pieces.append(spectra.colored_text(text, color) if has_own_color else text)
-    return re.sub(r'\s*<br>\s*', '<br>', ''.join(pieces)).strip()
+            piece = spectra.colored_text(text, color) if has_own_color else text
+            if item.own_style.get('display') == 'block':   # span en bloque dentro de un título: va en su propia línea
+                piece = ('<br>' if ''.join(pieces).strip() else '') + piece + '<br>'
+            pieces.append(piece)
+    return re.sub(r'<br>$', '', re.sub(r'\s*<br>\s*', '<br>', ''.join(pieces)).strip())
 
 
 def text_block(converter, node, items=None, layout=False):
@@ -59,6 +62,12 @@ def text_block(converter, node, items=None, layout=False):
         keeps_display = node.own_style.get('display') in ('inline-block', 'inline-flex', 'block') and not layout
         converter.css.add_leftover(node, target, translated, layout=not layout)
         converter.css.add(target, {'display': node.own_style['display']} if keeps_display else {})
+        if node.own_style.get('width') == 'fit-content':
+            # píldora o etiqueta (p. ej. un subtítulo con fondo y bordes redondos): mide lo que su texto, y su
+            # espacio arriba y abajo va en el bloque (Spectra no tiene atributo para ninguno de los dos)
+            converter.css.add(target, {'width': 'fit-content', 'max-width': '100%'})
+            converter.css.add(f'.uagb-block-{block_id}', {prop: node.own_style[prop] for prop in ('margin-top', 'margin-bottom')
+                                                          if node.own_style.get(prop, '').endswith('px')})
         if is_lone_link:   # el enlace toma el color y el subrayado del texto, no los del tema
             converter.css.add(f'{target} a', {'color': 'inherit', 'text-decoration': 'inherit'})
     child_nodes = [item for item in (node.children if items is None else items) if isinstance(item, Node)]

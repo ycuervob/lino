@@ -160,7 +160,7 @@ def wordpress_href(href):
     """Enlace del HTML local -> enlace en WordPress: imágenes locales a la carpeta de Medios (como el src) y
     los reemplazos de config.ENLACES (p. ej. la página de inicio)."""
     is_local_image = ':' not in href and not href.startswith('/') and \
-        href.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp'))
+        href.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf'))
     if is_local_image:
         return CARPETA_MEDIOS + href.rsplit('/', 1)[-1]
     for local, on_wordpress in ENLACES.items():

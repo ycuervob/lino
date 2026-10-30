@@ -14,7 +14,9 @@ LAYOUT_PROPS = {'display', 'grid-template-columns', 'grid-template-rows', 'grid-
                 'margin-top', 'margin-bottom', 'margin-left', 'margin-right', 'box-sizing', 'place-items'}
 MARGIN_PROPS = {'margin', 'margin-top', 'margin-bottom'}
 # cambios de celular que Spectra no guarda como atributo (p. ej. etiquetas que en celular se estiran y se redondean menos)
-MOBILE_ONLY_CSS = {'flex-grow', 'gap', 'row-gap', 'column-gap', 'border-radius', 'flex-direction', 'align-items'}
+MOBILE_ONLY_CSS = {'flex-grow', 'gap', 'row-gap', 'column-gap', 'border-radius', 'flex-direction', 'align-items',
+                   # una caja que en celular pasa a fila (p. ej. ícono + texto): sin esto Spectra deja cada hijo al 100 % y se apilan
+                   'flex', 'flex-wrap', 'flex-basis', 'flex-shrink'}
 
 
 class ExtraCss:
@@ -57,12 +59,14 @@ class ExtraCss:
         if layout and node.tag == 'div' and own.get('max-width', '').endswith('px') and (node.parent is None or node.parent.tag != 'section'):
             # bloque de texto angosto (p. ej. el texto de la portada al lado de una imagen): Spectra no tiene atributo
             self.add(target, {'max-width': own['max-width']})
-        if layout and node.tag == 'div' and own.get('width', '').endswith('px') and node.parent is not None and node.parent.tag != 'section':
-            # caja de ancho fijo (p. ej. una pestaña): Spectra no tiene atributo en px; en celular, su ancho propio si cambia
-            self.add(target, {'width': own['width'], 'max-width': '100%'})
+            if 'auto' in (own.get('margin-left'), own.get('margin-right')):   # fila centrada (auto/auto) o pegada a un lado (auto/0)
+                self.add(target, {side: own.get(side, '0') for side in ('margin-left', 'margin-right')})
+        if layout and node.tag != 'img' and own.get('width', '').endswith('px') and node.parent is not None and node.parent.tag != 'section':
+            # caja de ancho fijo (p. ej. una pestaña, o la columna de una cifra en <b>): Spectra no tiene atributo en px; en celular, su ancho propio si cambia
+            self.add(target, {'width': own['width'], 'max-width': f"min({own['width']}, 100%)"})
             mobile_width = node.own_mobile_style.get('width')
             if mobile_width and mobile_width != own['width']:
-                self.add(target, {'width': f'{mobile_width} !important'}, self.mobile_breakpoint)
+                self.add(target, {'width': f'{mobile_width} !important', 'max-width': '100% !important'}, self.mobile_breakpoint)
         if layout and own.get('flex-shrink') == '0':
             # Spectra no tiene atributo para esto: sin él, una lista con max-height aplasta y corta sus tarjetas
             self.add(target, {'flex-shrink': '0'})
@@ -76,6 +80,10 @@ class ExtraCss:
             mobile_changes['background'] = re.sub(r'url\(\s*[\'"]?([^\'")]+)[\'"]?\s*\)',
                                                   lambda m: f'url({media_url(m.group(1))})',
                                                   mobile_background)
+        mobile_color = node.own_mobile_style.get('color')
+        if 'color' in translated and mobile_color and mobile_color != own.get('color'):
+            # igual que el fondo: el color de escritorio quedó como atributo y el de celular se perdía
+            mobile_changes['color'] = mobile_color
         self.add(target, mobile_changes, self.mobile_breakpoint)
         for states, breakpoint in ((node.states, None), (node.mobile_states, self.mobile_breakpoint)):
             for state, declarations in states.items():
@@ -84,10 +92,18 @@ class ExtraCss:
                 kept = {prop: value for prop, value in declarations.items()
                         if state.startswith('::') or prop not in LAYOUT_PROPS}
                 self.add(selector, kept, breakpoint)
+                if layout and 'color' in kept and not state.startswith('::'):
+                    # botón hecho contenedor: su texto es un bloque de título con color propio, que no hereda
+                    # el del :hover (quedaba texto blanco sobre fondo blanco)
+                    self.add(', '.join(part.strip() + state + ' .uagb-heading-text' for part in target.split(',')),
+                             {'color': kept['color']}, breakpoint)
 
     def add_descendants(self, parent, target, only=None):
         """CSS de los descendientes que quedan dentro de un mismo bloque (enlaces en un texto, <li> de una lista,
         celdas de una tabla...), con selectores tipo 'target a:nth-of-type(2)'. only: hijos a recorrer."""
+        def signature(node):   # estilo del nodo y de todo lo que tiene adentro
+            return (node.tag, sorted(node.own_style.items()), [signature(c) for c in node.child_nodes])
+
         def visit(children, parent_selector):
             for child in children:
                 if not isinstance(child, Node):
@@ -96,7 +112,11 @@ class ExtraCss:
                 declarations = {prop: value for prop, value in child.own_style.items() if prop != 'display' or keeps_display}
                 siblings = child.parent.child_nodes if child.parent else [child]
                 same_tag = [sibling for sibling in siblings if sibling.tag == child.tag]
-                differs_from_siblings = any(sibling.own_style != child.own_style for sibling in same_tag)
+                if child.tag == 'tr':   # WordPress pasa la fila de <th> a <thead>: las filas de datos se cuentan aparte
+                    is_header = lambda row: any(cell.tag == 'th' for cell in row.child_nodes)
+                    same_tag = [row for row in same_tag if is_header(row) == is_header(child)]
+                # también si solo difiere lo de adentro (filas iguales con celdas distintas)
+                differs_from_siblings = any(signature(sibling) != signature(child) for sibling in same_tag)
                 nth = f':nth-of-type({same_tag.index(child) + 1})' if differs_from_siblings else ''
                 selector = f'{parent_selector} {child.tag}{nth}'
                 if child.tag == 'span':   # un <span> con color sale como <mark> (y el tema le pone negrita)
@@ -104,6 +124,11 @@ class ExtraCss:
                              {'font-weight': child.style.get('font-weight', '400'), **declarations})
                 else:
                     self.add(selector, declarations)
+                # lo que cambia en el @media de celular (p. ej. celdas más compactas para que la tabla quepa)
+                mobile = {prop: value for prop, value in child.own_mobile_style.items()
+                          if child.own_style.get(prop) != value and (prop != 'display' or keeps_display)}
+                if mobile:
+                    self.add(selector, mobile, self.mobile_breakpoint)
                 for state, state_declarations in child.states.items():
                     self.add(selector + state, state_declarations)
                 visit(child.children, selector)

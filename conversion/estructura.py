@@ -3,6 +3,7 @@
 Las funciones se llaman entre sí recursivamente (block -> box -> flow -> block...). Todas reciben el converter
 (conversor.Converter) con lo de la página: estilos, CSS de salida, prefijo de clases y carpeta del HTML.
 """
+import math
 import re
 
 from config import ANCHO_CONTENIDO, ICONOS, OMITIR, PX_CELULAR, PX_ESCRITORIO, PX_TABLET, SECCION_SIN_PADDING
@@ -15,7 +16,7 @@ from lectura.valores import four_sides, gaps, grid_columns, percent_widths, to_p
 from salida import bloques as spectra
 
 TEXT_TAGS = r'h[1-6]|p|blockquote|figcaption|dt|dd|address'
-RAW_HTML_TAGS = ('iframe', 'video', 'audio', 'svg', 'canvas', 'form', 'pre', 'hr', 'dl', 'select', 'input', 'button')
+RAW_HTML_TAGS = ('iframe', 'video', 'audio', 'svg', 'canvas', 'form', 'pre', 'hr', 'dl', 'select', 'input', 'button', 'details')
 ALIGN_ITEMS_VALUES = {'center': 'center', 'start': 'flex-start', 'end': 'flex-end', 'flex-start': 'flex-start',
                       'flex-end': 'flex-end'}
 JUSTIFY_CONTENT_VALUES = {'space-between': 'space-between', 'space-around': 'space-around',
@@ -148,6 +149,8 @@ def box(converter, node, block_id=None, **extra_attrs):
     _add_link(node, attrs)
     if background_css:
         converter.css.add(f'.uagb-block-{block_id}', {'background': background_css})
+    if not extra_attrs and _grows(node):   # caja que llena el alto sobrante de su columna flex (recuadros parejos)
+        converter.css.add(f'.uagb-block-{block_id}', {'flex': node.own_style.get('flex') or f"{node.own_style['flex-grow']} 1 auto"})
     converter.css.add_leftover(node, f'.uagb-block-{block_id}', translated)
     return spectra.container(flow(converter, node), block_id=block_id, anchor=node.attrs.get('id'),
                              class_name=converter.class_names(node), **attrs)
@@ -205,21 +208,63 @@ def _flex_ratio(child):
     return (child.own_style.get('flex', '').split() or [child.own_style.get('flex-grow', '1')])[0]
 
 
+def _flex_basis_percents(children):
+    """Base en % del flex de cada hijo ('1 1 calc(33.333% - 14px)' -> 33.333); None si alguno no la tiene."""
+    percents = []
+    for child in children:
+        parts = child.own_style.get('flex', '').split(None, 2)
+        basis = parts[2] if len(parts) == 3 else child.own_style.get('flex-basis', '')
+        found = re.search(r'(\d+(?:\.\d+)?)%', basis)
+        if not found:
+            return None
+        percents.append(float(found.group(1)))
+    return percents
+
+
+def _mobile_per_row(children):
+    """Cuántos hijos caben por fila en celular según su flex-basis en % del @media (50% -> 2); None si no lo cambia."""
+    percents = set()
+    for child in children:
+        mobile_flex = child.mobile_style.get('flex') or child.mobile_style.get('flex-basis') or ''
+        if mobile_flex == (child.style.get('flex') or child.style.get('flex-basis') or ''):
+            return None
+        found = re.search(r'(\d+(?:\.\d+)?)%', mobile_flex)
+        if not found:
+            return None
+        percents.add(float(found.group(1)))
+    return max(1, round(100 / percents.pop())) if len(percents) == 1 else None
+
+
 def _row_column(converter, child, **widths):
     """Contenedor de una columna de la fila. Una imagen o una fila anidada se envuelven en un contenedor sin padding;
     cualquier otro hijo es una caja (box) con los anchos de la columna."""
     is_icon = child.tag == 'span' and _is_icon(child)   # ícono suelto en una fila (p. ej. junto a un texto)
-    if child.tag == 'img' or is_icon or is_row(child):
+    # una etiqueta que va como bloque HTML (details, iframe…) se envuelve igual; si no, box() la aplanaba y se perdía
+    if child.tag == 'img' or is_icon or is_row(child) or child.tag in RAW_HTML_TAGS:
         inner_blocks = ([elementos.image(converter, child)] if child.tag == 'img' else
                         [elementos.icon(child, converter)] if is_icon else block(converter, child))
         column_id = spectra.new_block_id()
         if child.tag != 'img':   # la fila envuelta ocupa todo el alto de su columna (tarjetas de igual altura)
             converter.css.add(f'.uagb-block-{column_id} > .wp-block-uagb-container', {'flex': '1 1 auto', 'align-self': 'stretch'})
+        _min_width(converter, child, column_id)
         hide_attrs = mobile_hide_attrs(child) if child.tag == 'img' else {}
+        if child.tag == 'img' and (to_px(child.style.get('width')) or to_px(child.mobile_style.get('width'))):
+            # foto de ancho fijo (p. ej. un logo): su columna no se encoge, o la foto queda ovalada
+            converter.css.add(f'.uagb-block-{column_id}', {'flex-shrink': '0'})
         return column_id, spectra.container(inner_blocks, block_id=column_id, topPaddingDesktop=0, bottomPaddingDesktop=0,
                                             leftPaddingDesktop=0, rightPaddingDesktop=0, **widths, **hide_attrs)
     column_id = spectra.new_block_id()
+    _min_width(converter, child, column_id)
     return column_id, box(converter, child, block_id=column_id, **widths)
+
+
+def _min_width(converter, child, column_id):
+    """min-width en px de una columna (p. ej. una foto que no debe quedar diminuta en pantallas medianas). En celular
+    las columnas se apilan, así que ahí vuelve a 0."""
+    min_px = to_px(child.own_style.get('min-width'))
+    if min_px and child.tag != 'img':   # la foto ya lleva su min-width en el img
+        converter.css.add(f'.uagb-block-{column_id}', {'min-width': f'{min_px}px'})
+        converter.css.add(f'.uagb-block-{column_id}', {'min-width': '0'}, converter.css.mobile_breakpoint)
 
 
 def _row_with_columns(converter, node, children, block_id, attrs, is_grid, stacks_on_mobile, column_gap):
@@ -235,10 +280,20 @@ def _row_with_columns(converter, node, children, block_id, attrs, is_grid, stack
     else:
         desktop = [f'{_flex_ratio(child)}fr' for child in children]
         tablet = mobile = ['1fr'] if stacks_on_mobile else desktop
+        per_row = _mobile_per_row(children)
+        if per_row and not stacks_on_mobile:   # 'flex: 0 0 calc(50% - 6px)' en celular -> 2 por fila
+            tablet = mobile = ['1fr'] * per_row
     gap_percent = max(1, round(column_gap / PX_ESCRITORIO * 100))   # hueco en % del ancho de la fila
     desktop_widths = percent_widths(desktop, gap_percent, PX_ESCRITORIO)
     tablet_widths = percent_widths(tablet, gap_percent, PX_TABLET)
     mobile_widths = percent_widths(mobile, gap_percent, PX_CELULAR)
+    bases = None if is_grid else _flex_basis_percents(children)
+    if bases:   # 'flex: 1 1 calc(33.333% - 14px)': el ancho sale de la base en %, no de flex-grow (si no, todo en una fila)
+        per_row = max(1, round(100 / min(bases)))
+        free = 100 - gap_percent * (per_row - 1)
+        desktop_widths = [math.floor(basis * free / 100 * 10) / 10 for basis in bases]
+        if not stacks_on_mobile and not _mobile_per_row(children):
+            tablet_widths = mobile_widths = desktop_widths
     columns = []
     for index, child in enumerate(children):
         # si hay más hijos que columnas, se repite el patrón (fila que salta de línea)
@@ -273,9 +328,12 @@ def _row_sized_by_content(converter, node, children, block_id, attrs, stacks_on_
         own_width = child.own_style.get('width', '')
         converter.css.add(f'.uagb-block-{column_id}', {'width': f"{own_width if own_width.endswith('px') else 'auto'} !important",
                                                         'flex': child.own_style.get('flex', '0 1 auto')})
+        if own_width.endswith('px'):
+            # Spectra pisa el ancho de los hijos de la fila con un width: auto !important más específico; el max-width no lo toca
+            converter.css.add(f'.uagb-block-{column_id}', {'max-width': f'min({own_width}, 100%) !important'})
         mobile_width = child.own_mobile_style.get('width')
         if own_width.endswith('px') and mobile_width and mobile_width != own_width:   # columna de ancho fijo que cambia en celular
-            converter.css.add(f'.uagb-block-{column_id}', {'width': f'{mobile_width} !important'}, mobile_breakpoint)
+            converter.css.add(f'.uagb-block-{column_id}', {'width': f'{mobile_width} !important', 'max-width': '100% !important'}, mobile_breakpoint)
         mobile_flex = child.own_mobile_style.get('flex')
         if mobile_flex not in (None, child.own_style.get('flex')):   # flex propio del @media de celular
             converter.css.add(f'.uagb-block-{column_id}', {'flex': mobile_flex}, mobile_breakpoint)
@@ -335,6 +393,11 @@ def page(converter):
     caja que contiene secciones) se recorre por dentro."""
     body = next((node for node in walk(converter.root) if node.tag == 'body'), converter.root)
     sections = []
+    # negrilla/cursiva dentro de un texto: el color de su párrafo. Sin esto Spectra le pone el color del contenedor
+    # (.uagb-block-X * { color }) y, p. ej., queda blanca dentro de un recuadro claro con texto oscuro
+    page_class = '.' + converter.class_prefix + 'page'
+    converter.css.add(f'{page_class} .uagb-heading-text strong, {page_class} .uagb-heading-text b, '
+                      f'{page_class} .uagb-heading-text em', {'color': 'inherit'})
 
     def add_sections(parent):
         loose = []

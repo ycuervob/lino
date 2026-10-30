@@ -11,7 +11,7 @@ from lectura.valores import four_sides, image_size, luminance, media_url, parse_
 from salida import bloques as spectra
 
 # etiquetas que se esperan como bloque HTML; con cualquier otra se avisa en la terminal
-EXPECTED_HTML_TAGS = ('iframe', 'video', 'audio', 'svg', 'canvas', 'form', 'hr')
+EXPECTED_HTML_TAGS = ('iframe', 'video', 'audio', 'svg', 'canvas', 'form', 'hr', 'details', 'table')
 
 
 def image(converter, node):
@@ -23,6 +23,8 @@ def image(converter, node):
     if width_px:
         attrs.update(width=width_px, height=round(width_px * natural_height / natural_width))
         translated.add('width')
+        # en una fila flex el bloque se encoge (un logo de 52 px quedaba en 10 px); que guarde su ancho
+        converter.css.add(f'.uagb-block-{block_id}', {'flex-shrink': '0'})
     radius = to_px(own.get('border-radius'))
     if radius is not None:
         attrs.update(imageBorderTopLeftRadius=radius, imageBorderTopRightRadius=radius,
@@ -37,17 +39,39 @@ def image(converter, node):
     parent_align = (node.parent.style if node.parent else {}).get('text-align')
     if parent_align in ('center', 'right'):   # imagen centrada por el text-align de su contenedor
         attrs['align'] = parent_align
-    if own.get('align-self') == 'center':   # o por align-self en una columna flex
-        attrs['align'] = 'center'
+    self_align = {'center': 'center', 'flex-end': 'right', 'end': 'right',
+                  'flex-start': 'left', 'start': 'left'}.get(own.get('align-self'))
+    if self_align:   # o por align-self en una columna flex
+        attrs['align'] = self_align
         translated.add('align-self')
     target = f'.uagb-block-{block_id} img'
     converter.css.add_leftover(node, target, translated)
+    margins = {prop: value for prop, value in own.items() if prop.startswith('margin')}
+    mobile_own = {prop: value for prop, value in node.own_mobile_style.items() if prop.startswith('margin')}
+    if not any(part.startswith('-') for value in margins.values() for part in value.split()) and \
+            any(part.startswith('-') for value in mobile_own.values() for part in value.split()):
+        # márgenes negativos solo en celular (p. ej. un logo que cuelga sobre el banner)
+        converter.css.add(f'.uagb-block-{block_id}', mobile_own, converter.css.mobile_breakpoint)
+    if any(part.startswith('-') for value in margins.values() for part in value.split()):
+        # imagen que se monta sobre lo vecino (márgenes negativos): van en el bloque, que es lo que ocupa el lugar
+        converter.css.add(f'.uagb-block-{block_id}', margins)
+        mobile_margins = {prop: value for prop, value in node.own_mobile_style.items()
+                          if prop.startswith('margin') and own.get(prop) != value}
+        if mobile_margins:
+            converter.css.add(f'.uagb-block-{block_id}', mobile_margins, converter.css.mobile_breakpoint)
     mobile_width_px = to_px(node.own_mobile_style.get('width'))
     if width_px and mobile_width_px and mobile_width_px != width_px:   # foto de ancho fijo más pequeña en celular
-        converter.css.add(target, {'width': f'{mobile_width_px}px'}, converter.css.mobile_breakpoint)
+        converter.css.add(target, {'width': f'{mobile_width_px}px', 'min-width': f'{mobile_width_px}px'},
+                          converter.css.mobile_breakpoint)
+    if width_px and width_px <= 160:   # logo o avatar de ancho fijo: también como mínimo, para que en una fila no se angoste (quedaba ovalado)
+        converter.css.add(target, {'min-width': f'{width_px}px'})
+        if node.own_mobile_style.get('width') and not mobile_width_px:   # en celular pasa a 100 % u otro: sin mínimo
+            converter.css.add(target, {'min-width': '0'}, converter.css.mobile_breakpoint)
     if own.get('width') and not width_px:   # 100%, auto...: si no, Spectra usa el ancho natural de la foto
-        converter.css.add(target, {'width': own['width'], 'max-width': 'none'})
-        if own['width'] == '100%':   # el bloque y su <figure> también, o la foto no llena la tarjeta
+        # un % ya se lo da la fila al bloque; la foto llena su bloque (si no, queda al 25 % de un 25 %)
+        img_width = '100%' if own['width'].endswith('%') else own['width']
+        converter.css.add(target, {'width': img_width, 'max-width': 'none'})
+        if img_width == '100%':   # el bloque y su <figure> también, o la foto no llena la tarjeta
             converter.css.add(f'.uagb-block-{block_id}, .uagb-block-{block_id} .wp-block-uagb-image__figure',
                               {'width': '100%', 'max-width': '100%'})
     return spectra.image(media_url(src), node.attrs.get('alt', ''), natural_width, natural_height,
@@ -151,11 +175,15 @@ def bullet_list(converter, node):
 
 def table(converter, node):
     """<table> -> tabla nativa de WordPress (encabezados <th> y filas de <td>) con una clase propia para su CSS."""
+    if any('rowspan' in cell.attrs or 'colspan' in cell.attrs for cell in walk(node) if cell.tag in ('td', 'th')):
+        return raw_html(converter, node)   # la tabla de WordPress no admite celdas combinadas
     table_class = f'tbl-{spectra.new_block_id()[:6]}'
     header_cells = [inline_html(cell.children, None) for cell in walk(node) if cell.tag == 'th']
     rows = [[inline_html(cell.children, None) for cell in row.child_nodes if cell.tag == 'td']
             for row in walk(node) if row.tag == 'tr']
     converter.css.add_leftover(node, f'.{table_class} table', set(), layout=False)
+    if node.style.get('font-family'):   # como las listas: el tema les pone su fuente a las celdas
+        converter.css.add(f'.{table_class} th, .{table_class} td', {'font-family': node.style['font-family']})
     converter.css.add_descendants(node, f'.{table_class} table')
     return spectra.table(header_cells, [row for row in rows if row], table_class)
 
@@ -169,6 +197,11 @@ def raw_html(converter, node):
         if isinstance(item, str):
             return escape(item, quote=False)
         attrs = dict(item.attrs)
+        for name in ('src', 'poster'):   # archivos locales (video, póster) -> carpeta de Medios
+            if attrs.get(name):
+                attrs[name] = media_url(attrs[name])
+        if attrs.get('href'):
+            attrs['href'] = wordpress_href(attrs['href'])
         if is_outer:
             attrs['class'] = ((attrs.get('class') or '') + ' ' + html_class).strip()
         attrs_html = ''.join(f' {name}="{escape(value or "")}"' for name, value in attrs.items())

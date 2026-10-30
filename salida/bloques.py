@@ -7,6 +7,12 @@ import json, random
 
 
 
+
+def hide_classes_for(attrs):
+    """Clases con que Spectra oculta un bloque por dispositivo; sin ellas WordPress marca el bloque como inválido."""
+    return ''.join(f' uag-hide-{device}' for device, attr in
+                   (('desktop', 'UAGHideDesktop'), ('tab', 'UAGHideTab'), ('mob', 'UAGHideMob')) if attrs.get(attr))
+
 def new_block_id():
     """ID de 8 cifras hexadecimales para block_id (y la clase .uagb-block-<id>)."""
     return '%08x' % random.getrandbits(32)
@@ -39,8 +45,7 @@ def container(children, block_id=None, root=False, full=False, anchor=None, clas
         block_attrs["className"] = class_name
     if anchor:
         block_attrs["anchor"] = anchor
-    hide_classes = ''.join(f' uag-hide-{device}' for device, attr in
-                           (('desktop', 'UAGHideDesktop'), ('tab', 'UAGHideTab'), ('mob', 'UAGHideMob')) if attrs.get(attr))
+    hide_classes = hide_classes_for(attrs)
     layout = f' uagb-layout-{attrs["layout"]}' if attrs.get('layout') else ''
     html_class = 'wp-block-uagb-container' + layout + (f' {class_name}' if class_name else '') + hide_classes + f' uagb-block-{block_id}'
     if root:
@@ -63,6 +68,8 @@ def heading(text, tag='h2', block_id=None, class_name=None, **attrs):
     if class_name:
         block_attrs["className"] = class_name
     html_class = f'wp-block-uagb-advanced-heading uagb-block-{block_id}' + (f' {class_name}' if class_name else '')
+    # ocultar en celular: Spectra guarda la clase en el HTML; sin ella WordPress marca el bloque como inválido
+    html_class += hide_classes_for(attrs)
     return (f'<!-- wp:uagb/advanced-heading {to_json(block_attrs)} -->\n'
             f'<div class="{html_class}"><{tag} class="uagb-heading-text">{text}</{tag}></div>\n'
             '<!-- /wp:uagb/advanced-heading -->')
@@ -84,7 +91,7 @@ def image(url, alt, natural_width, natural_height, block_id=None, class_name=Non
     block_attrs.update(attrs)
     if class_name:
         block_attrs["className"] = class_name
-    hide_class = ' uag-hide-mob' if attrs.get('UAGHideMob') else ''
+    hide_class = hide_classes_for(attrs)
     html_class = (f'wp-block-uagb-image{hide_class} uagb-block-{block_id} wp-block-uagb-image--layout-default '
                   f'wp-block-uagb-image--effect-static wp-block-uagb-image--align-{attrs.get("align", "none")}'
                   ) + (f' {class_name}' if class_name else '')
